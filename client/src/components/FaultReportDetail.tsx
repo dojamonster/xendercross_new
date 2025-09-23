@@ -3,7 +3,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft, FileText, Download, Wrench, ShoppingCart } from "lucide-react";
+import { ArrowLeft, FileText, Download, Wrench, ShoppingCart, Eye, Trash2, ExternalLink } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 import type { FaultReport } from "./ReportsTable";
 
 export interface FaultReportDetailProps {
@@ -20,6 +23,26 @@ export default function FaultReportDetail({
   onPullRequest 
 }: FaultReportDetailProps) {
   const [isProcessing, setIsProcessing] = useState(false);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const removeAttachmentMutation = useMutation({
+    mutationFn: (filename: string) => apiClient.removeAttachment(report.id, filename),
+    onSuccess: () => {
+      toast({
+        title: "Attachment Removed",
+        description: "The file has been successfully removed from the report",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/fault-reports"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  });
 
   const getStatusBadge = (status: string) => {
     const statusConfig = {
@@ -80,6 +103,41 @@ export default function FaultReportDetail({
     setIsProcessing(false);
   };
 
+  const handleRemoveAttachment = (filename: string) => {
+    if (window.confirm('Are you sure you want to remove this attachment?')) {
+      removeAttachmentMutation.mutate(filename);
+    }
+  };
+
+  const handleViewFile = (filename: string) => {
+    const url = apiClient.getFileViewUrl(filename);
+    window.open(url, '_blank');
+  };
+
+  const handleDownloadFile = (filename: string) => {
+    const url = apiClient.getFileDownloadUrl(filename);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const getFileIcon = (filename: string) => {
+    const ext = filename.split('.').pop()?.toLowerCase();
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif'];
+    const docExts = ['pdf', 'doc', 'docx', 'txt', 'xls', 'xlsx'];
+    
+    if (imageExts.includes(ext || '')) {
+      return '🖼️';
+    } else if (ext === 'pdf') {
+      return '📄';
+    } else if (docExts.includes(ext || '')) {
+      return '📝';
+    }
+    return '📎';
+  };
   return (
     <div className="w-full max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-4 mb-6">
@@ -161,22 +219,46 @@ export default function FaultReportDetail({
                       <CardContent className="p-3">
                         <div className="flex items-center space-x-3">
                           <FileText className="h-8 w-8 text-muted-foreground flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate" data-testid={`file-name-${index}`}>
+                            <div className="text-2xl flex-shrink-0">
+                              {getFileIcon(filename)}
+                            </div>
+                                {filename.split('-').slice(2).join('-') || filename}
                               {file.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground" data-testid={`file-size-${index}`}>
-                              {(file.size / 1024).toFixed(1)} KB
+                              <p className="text-xs text-muted-foreground">
+                                Click to view or download
+                              </p>
                             </p>
                           </div>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => console.log('Download file:', file.name)}
-                            data-testid={`button-download-${index}`}
-                          >
-                            <Download className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleViewFile(filename)}
+                              data-testid={`button-view-${index}`}
+                              title="View file"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleDownloadFile(filename)}
+                              data-testid={`button-download-${index}`}
+                              title="Download file"
+                            >
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleRemoveAttachment(filename)}
+                              data-testid={`button-remove-${index}`}
+                              title="Remove attachment"
+                              disabled={removeAttachmentMutation.isPending}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
                         </div>
                       </CardContent>
                     </Card>

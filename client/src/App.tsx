@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ClipboardList, Plus, Home } from "lucide-react";
+import { ClipboardList, Plus, Home, BarChart3 } from "lucide-react";
 import { apiClient } from "./lib/api";
 
 import FaultReportForm from "./components/FaultReportForm";
@@ -16,10 +16,12 @@ import ReportsTable, { type FaultReport } from "./components/ReportsTable";
 import FaultReportDetail from "./components/FaultReportDetail";
 import JobCardStatus from "./components/JobCardStatus";
 import ProcurementRequest from "./components/ProcurementRequest";
+import AnalyticsDashboard from "./components/AnalyticsDashboard";
 import ThemeToggle from "./components/ThemeToggle";
 
 type AppView = 
   | { type: 'dashboard' }
+  | { type: 'analytics' }
   | { type: 'detail'; report: FaultReport }
   | { type: 'job-card'; reportId: string; reportTitle: string }
   | { type: 'procurement'; report: FaultReport };
@@ -27,11 +29,12 @@ type AppView =
 function AppContent() {
   const [currentView, setCurrentView] = useState<AppView>({ type: 'dashboard' });
   
-  const { data: reports = [], isLoading, refetch } = useQuery({
+  const { data: reportsData, isLoading, refetch } = useQuery({
     queryKey: ["/api/fault-reports"],
     queryFn: () => apiClient.fetchFaultReports()
   });
 
+  const reports = reportsData?.data || [];
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: FaultReport['status'] }) => 
       apiClient.updateFaultReportStatus(id, { status }),
@@ -99,7 +102,7 @@ function AppContent() {
       pending: reports.filter(r => r.status === 'pending').length,
       approved: reports.filter(r => r.status === 'approved').length,
       assigned: reports.filter(r => r.status === 'assigned').length,
-      total: reports.length
+       total: reportsData?.total || 0
     };
   };
 
@@ -116,6 +119,15 @@ function AppContent() {
     );
   }
 
+  if (currentView.type === 'analytics') {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto p-6">
+          <AnalyticsDashboard onBack={handleBackToDashboard} />
+        </div>
+      </div>
+    );
+  }
   if (currentView.type === 'detail') {
     return (
       <div className="min-h-screen bg-background">
@@ -181,6 +193,14 @@ function AppContent() {
               </div>
             </div>
             <ThemeToggle />
+              <Button
+                variant="outline"
+                onClick={() => setCurrentView({ type: 'analytics' })}
+                data-testid="button-analytics"
+              >
+                <BarChart3 className="h-4 w-4 mr-2" />
+                Analytics
+              </Button>
           </div>
         </div>
       </header>

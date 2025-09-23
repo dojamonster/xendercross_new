@@ -17,11 +17,74 @@ export interface ProcurementRequestData {
   priority: '24hrs' | '72hrs' | 'miscellaneous';
 }
 
+export interface FaultReportFilters {
+  search?: string;
+  status?: string;
+  priority?: string;
+  department?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  page?: number;
+  limit?: number;
+}
+
+export interface PaginatedResult<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export interface DashboardAnalytics {
+  totalReports: number;
+  pendingReports: number;
+  approvedReports: number;
+  assignedReports: number;
+  rejectedReports: number;
+  recentReports: FaultReport[];
+  statusDistribution: { status: string; count: number; percentage: number }[];
+  priorityBreakdown: { priority: string; count: number }[];
+  departmentActivity: { department: string; count: number }[];
+}
+
+export interface TrendData {
+  date: string;
+  pending: number;
+  approved: number;
+  assigned: number;
+  rejected: number;
+  total: number;
+}
+
+export interface FileInfo {
+  filename: string;
+  size: number;
+  extension: string;
+  created: string;
+  modified: string;
+  isImage: boolean;
+  isPdf: boolean;
+  isDocument: boolean;
+}
 class ApiClient {
   private baseUrl = '/api';
 
-  async fetchFaultReports(): Promise<FaultReport[]> {
-    const response = await fetch(`${this.baseUrl}/fault-reports`);
+  async fetchFaultReports(filters?: FaultReportFilters): Promise<PaginatedResult<FaultReport>> {
+    const params = new URLSearchParams();
+    
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          params.append(key, value.toString());
+        }
+      });
+    }
+    
+    const url = params.toString() ? `${this.baseUrl}/fault-reports?${params}` : `${this.baseUrl}/fault-reports`;
+    const response = await fetch(url);
     if (!response.ok) {
       throw new Error('Failed to fetch fault reports');
     }
@@ -141,8 +204,73 @@ class ApiClient {
     return response.json();
   }
 
+  async removeAttachment(id: string, filename: string): Promise<FaultReport> {
+    const response = await fetch(`${this.baseUrl}/fault-reports/${id}/attachments/${filename}`, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to remove attachment');
+    }
+    
+    return response.json();
+  }
+
+  async getFileInfo(filename: string): Promise<FileInfo> {
+    const response = await fetch(`${this.baseUrl}/files/${filename}/info`);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to get file info');
+    }
+    return response.json();
+  }
+
+  async getDashboardAnalytics(): Promise<DashboardAnalytics> {
+    const response = await fetch(`${this.baseUrl}/analytics/dashboard`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch dashboard analytics');
+    }
+    return response.json();
+  }
+
+  async getStatusDistribution(): Promise<{ status: string; count: number; percentage: number }[]> {
+    const response = await fetch(`${this.baseUrl}/analytics/status-distribution`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch status distribution');
+    }
+    return response.json();
+  }
+
+  async getPriorityBreakdown(): Promise<{ priority: string; count: number }[]> {
+    const response = await fetch(`${this.baseUrl}/analytics/priority-breakdown`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch priority breakdown');
+    }
+    return response.json();
+  }
+
+  async getDepartmentActivity(): Promise<{ department: string; count: number }[]> {
+    const response = await fetch(`${this.baseUrl}/analytics/department-activity`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch department activity');
+    }
+    return response.json();
+  }
+
+  async getTrendData(period: string = '30d'): Promise<TrendData[]> {
+    const response = await fetch(`${this.baseUrl}/analytics/trends?period=${period}`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch trend data');
+    }
+    return response.json();
+  }
   getFileDownloadUrl(filename: string): string {
-    return `/uploads/${filename}`;
+    return `${this.baseUrl}/files/${filename}`;
+  }
+
+  getFileViewUrl(filename: string): string {
+    return `${this.baseUrl}/files/${filename}`;
   }
 }
 
