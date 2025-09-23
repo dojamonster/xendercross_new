@@ -20,19 +20,29 @@ const fileStorage = multer.diskStorage({
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    cb(null, file.fieldname + '-' + uniqueSuffix + '-' + sanitizedName);
   }
 });
+
+const allowedMimeTypes = new Set([
+  'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
+  'application/pdf',
+  'text/plain',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+]);
 
 const upload = multer({ 
   storage: fileStorage,
   fileFilter: (req, file, cb) => {
-    // Allow common file types
-    const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx|txt|xlsx|xls/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
+    const allowedExtensions = /\.(jpeg|jpg|png|gif|pdf|doc|docx|txt|xlsx|xls)$/i;
+    const hasValidExtension = allowedExtensions.test(file.originalname);
+    const hasValidMimeType = allowedMimeTypes.has(file.mimetype);
     
-    if (mimetype && extname) {
+    if (hasValidExtension && hasValidMimeType) {
       return cb(null, true);
     } else {
       cb(new Error('Only images, PDFs, and documents are allowed!'));
@@ -75,27 +85,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create a new fault report
   app.post("/api/fault-reports", upload.array('attachments', 5), async (req, res) => {
     try {
-      // Parse form data
+      // Parse form data (excluding status and attachments - they're controlled separately)
       const reportData = {
         title: req.body.title,
         description: req.body.description,
         priority: req.body.priority,
         department: req.body.department,
         location: req.body.location,
-        reportedBy: req.body.reportedBy,
-        status: req.body.status || "pending",
-        attachments: []
+        reportedBy: req.body.reportedBy
       };
 
       // Validate the data
       const validatedData = insertFaultReportSchema.parse(reportData);
 
-      // Add file names if any files were uploaded
-      if (req.files && Array.isArray(req.files)) {
-        validatedData.attachments = req.files.map(file => file.filename);
-      }
+      // Create the report with default status and attachments
+      const reportToCreate = {
+        ...validatedData,
+        status: "pending" as const,
+        attachments: req.files && Array.isArray(req.files) 
+          ? req.files.map(file => file.filename) 
+          : []
+      };
 
-      const newReport = await storage.createFaultReport(validatedData);
+      const newReport = await storage.createFaultReport(reportToCreate);
       res.status(201).json(newReport);
     } catch (error) {
       console.error("Error creating fault report:", error);
@@ -235,10 +247,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Download file endpoint
+  // Add attachment to existing fault report
+  app.post("/api/fault-reports/:id/attachments", upload.single('attachment'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      const updatedReport = await storage.addAttachmentToReport(req.params.id, req.file.filename);
+      
+      if (!updatedReport) {
+        // Clean up the uploaded file if report not found
+        fs.unlink(req.file.path, (err) => {
+          if (err) console.error("Error deleting file:", err);
+        });
+        return res.status(404).json({ error: "Fault report not found" });
+      }
+      
+      res.json(updatedReport);
+    } catch (error) {
+      console.error("Error adding attachment:", error);
+      
+      // Clean up uploaded file on error
+      if (req.file) {
+        fs.unlink(req.file.path, (err) => {
+          if (err) console.error("Error deleting file:", err);
+        });
+      }
+      
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Download file endpoint (secure)
   app.get("/api/files/:filename", (req, res) => {
     const filename = req.params.filename;
-    const filePath = path.join(uploadDir, filename);
+    
+    // Security: ensure filename doesn't contain path traversal
+    if (path.basename(filename) !== filename || filename.includes('..')) {
+      return res.status(400).json({ error: "Invalid filename" });
+    }
+    
+    const filePath = path.resolve(uploadDir, filename);
+    
+    // Security: ensure resolved path is within uploadDir
+    if (!filePath.startsWith(path.resolve(uploadDir))) {
+      return res.status(400).json({ error: "Invalid file path" });
+    }
     
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "File not found" });

@@ -42,6 +42,8 @@ export const faultReports = pgTable("fault_reports", {
 
 export const insertFaultReportSchema = createInsertSchema(faultReports).omit({
   id: true,
+  status: true,
+  attachments: true,
   createdAt: true,
   updatedAt: true,
 });

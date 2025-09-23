@@ -55,7 +55,7 @@ export class MemStorage implements IStorage {
     return this.faultReports.get(id);
   }
 
-  async createFaultReport(insertReport: InsertFaultReport): Promise<FaultReport> {
+  async createFaultReport(insertReport: any): Promise<FaultReport> {
     const id = randomUUID();
     const now = new Date();
     const report: FaultReport = {

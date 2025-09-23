@@ -7,9 +7,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Upload, FileText, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api";
+import type { FaultReport } from "./ReportsTable";
 
 export interface FaultReportFormProps {
-  onSubmit?: (report: any) => void;
+  onSubmit?: (report: FaultReport) => void;
 }
 
 export default function FaultReportForm({ onSubmit }: FaultReportFormProps) {
@@ -22,8 +25,42 @@ export default function FaultReportForm({ onSubmit }: FaultReportFormProps) {
     reportedBy: ""
   });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const createReportMutation = useMutation({
+    mutationFn: (data: { formData: typeof formData; files: File[] }) => 
+      apiClient.createFaultReport(data.formData, data.files),
+    onSuccess: (report) => {
+      toast({
+        title: "Report Submitted",
+        description: "Your fault report has been submitted successfully",
+      });
+      
+      // Invalidate and refetch reports
+      queryClient.invalidateQueries({ queryKey: ["/api/fault-reports"] });
+      
+      // Reset form
+      setFormData({
+        title: "",
+        description: "",
+        priority: "",
+        department: "",
+        location: "",
+        reportedBy: ""
+      });
+      setSelectedFiles([]);
+      
+      onSubmit?.(report);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Submission Failed",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  });
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -49,37 +86,7 @@ export default function FaultReportForm({ onSubmit }: FaultReportFormProps) {
       return;
     }
 
-    setIsSubmitting(true);
-    
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    const reportData = {
-      ...formData,
-      files: selectedFiles,
-      id: Date.now().toString(),
-      status: "pending",
-      createdAt: new Date().toISOString()
-    };
-
-    onSubmit?.(reportData);
-    
-    toast({
-      title: "Report Submitted",
-      description: "Your fault report has been submitted successfully",
-    });
-
-    // Reset form
-    setFormData({
-      title: "",
-      description: "",
-      priority: "",
-      department: "",
-      location: "",
-      reportedBy: ""
-    });
-    setSelectedFiles([]);
-    setIsSubmitting(false);
+    createReportMutation.mutate({ formData, files: selectedFiles });
   };
 
   return (
@@ -221,11 +228,11 @@ export default function FaultReportForm({ onSubmit }: FaultReportFormProps) {
           <div className="flex gap-4">
             <Button
               type="submit"
-              disabled={isSubmitting}
+              disabled={createReportMutation.isPending}
               className="flex-1"
               data-testid="button-submit"
             >
-              {isSubmitting ? "Submitting..." : "Submit Report"}
+              {createReportMutation.isPending ? "Submitting..." : "Submit Report"}
             </Button>
             <Button
               type="button"
