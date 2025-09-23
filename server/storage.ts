@@ -45,6 +45,7 @@ export interface TrendData {
   rejected: number;
   total: number;
 }
+
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -86,7 +87,7 @@ export class MemStorage implements IStorage {
     const sampleReports = [
       {
         title: "Server Room AC Malfunction",
-        description: "Air conditioning unit not working properly",
+        description: "Air conditioning unit not working properly, temperature rising above safe levels",
         priority: "critical",
         department: "IT",
         location: "Server Room A",
@@ -95,7 +96,7 @@ export class MemStorage implements IStorage {
       },
       {
         title: "Printer Paper Jam",
-        description: "Office printer has recurring paper jams",
+        description: "Office printer has recurring paper jams, affecting daily operations",
         priority: "low",
         department: "Administration",
         location: "Office Floor 2",
@@ -104,12 +105,39 @@ export class MemStorage implements IStorage {
       },
       {
         title: "Network Connectivity Issues",
-        description: "Intermittent network outages in building C",
+        description: "Intermittent network outages in building C affecting productivity",
         priority: "high",
         department: "IT",
         location: "Building C",
         reportedBy: "Mike Johnson",
         status: "assigned" as const
+      },
+      {
+        title: "Broken Window in Conference Room",
+        description: "Large crack in conference room window, safety hazard",
+        priority: "medium",
+        department: "Facilities",
+        location: "Conference Room B",
+        reportedBy: "Sarah Wilson",
+        status: "pending" as const
+      },
+      {
+        title: "Elevator Maintenance Required",
+        description: "Elevator making strange noises and moving slowly",
+        priority: "high",
+        department: "Maintenance",
+        location: "Main Building Elevator",
+        reportedBy: "Tom Brown",
+        status: "approved" as const
+      },
+      {
+        title: "Parking Lot Lighting",
+        description: "Several parking lot lights are not working, security concern",
+        priority: "medium",
+        department: "Security",
+        location: "Parking Lot A",
+        reportedBy: "Lisa Davis",
+        status: "rejected" as const
       }
     ];
 
@@ -276,7 +304,7 @@ export class MemStorage implements IStorage {
     this.faultReports.set(reportId, updatedReport);
     return updatedReport;
   }
-}
+
   async removeAttachmentFromReport(reportId: string, filename: string): Promise<FaultReport | undefined> {
     const report = this.faultReports.get(reportId);
     if (!report) return undefined;
@@ -423,5 +451,6 @@ export class MemStorage implements IStorage {
       .map(([department, count]) => ({ department, count }))
       .sort((a, b) => b.count - a.count);
   }
+}
 
 export const storage = new MemStorage();

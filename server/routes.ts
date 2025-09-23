@@ -54,14 +54,27 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Serve uploaded files statically
+  // Serve uploaded files statically with security checks
   app.use('/uploads', express.static(uploadDir));
 
-  // Get all fault reports
+  // Enhanced fault reports endpoint with filtering and pagination
   app.get("/api/fault-reports", async (req, res) => {
     try {
-      const reports = await storage.getFaultReports();
-      res.json(reports);
+      const filters = {
+        search: req.query.search as string,
+        status: req.query.status as string,
+        priority: req.query.priority as string,
+        department: req.query.department as string,
+        dateFrom: req.query.dateFrom as string,
+        dateTo: req.query.dateTo as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'asc' | 'desc',
+        page: req.query.page ? parseInt(req.query.page as string) : undefined,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : undefined,
+      };
+
+      const result = await storage.getFaultReports(filters);
+      res.json(result);
     } catch (error) {
       console.error("Error fetching fault reports:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -279,27 +292,183 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Download file endpoint (secure)
-  app.get("/api/files/:filename", (req, res) => {
-    const filename = req.params.filename;
-    
-    // Security: ensure filename doesn't contain path traversal
-    if (path.basename(filename) !== filename || filename.includes('..')) {
-      return res.status(400).json({ error: "Invalid filename" });
+  // Remove attachment from fault report
+  app.delete("/api/fault-reports/:id/attachments/:filename", async (req, res) => {
+    try {
+      const { id, filename } = req.params;
+      
+      // Verify file belongs to this report
+      const hasAccess = await storage.verifyFileAccess(filename);
+      if (!hasAccess) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const updatedReport = await storage.removeAttachmentFromReport(id, filename);
+      
+      if (!updatedReport) {
+        return res.status(404).json({ error: "Fault report not found" });
+      }
+
+      // Delete the physical file
+      const filePath = path.join(uploadDir, filename);
+      fs.unlink(filePath, (err) => {
+        if (err) console.error("Error deleting file:", err);
+      });
+      
+      res.json(updatedReport);
+    } catch (error) {
+      console.error("Error removing attachment:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-    
-    const filePath = path.resolve(uploadDir, filename);
-    
-    // Security: ensure resolved path is within uploadDir
-    if (!filePath.startsWith(path.resolve(uploadDir))) {
-      return res.status(400).json({ error: "Invalid file path" });
+  });
+
+  // Secure file download endpoint
+  app.get("/api/files/:filename", async (req, res) => {
+    try {
+      const filename = req.params.filename;
+      
+      // Security: ensure filename doesn't contain path traversal
+      if (path.basename(filename) !== filename || filename.includes('..')) {
+        return res.status(400).json({ error: "Invalid filename" });
+      }
+      
+      // Verify file access
+      const hasAccess = await storage.verifyFileAccess(filename);
+      if (!hasAccess) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const filePath = path.resolve(uploadDir, filename);
+      
+      // Security: ensure resolved path is within uploadDir
+      if (!filePath.startsWith(path.resolve(uploadDir))) {
+        return res.status(400).json({ error: "Invalid file path" });
+      }
+      
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: "File not found" });
+      }
+
+      // Set appropriate headers for different file types
+      const ext = path.extname(filename).toLowerCase();
+      const mimeTypes: { [key: string]: string } = {
+        '.pdf': 'application/pdf',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.txt': 'text/plain',
+        '.xls': 'application/vnd.ms-excel',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      };
+
+      const mimeType = mimeTypes[ext] || 'application/octet-stream';
+      res.setHeader('Content-Type', mimeType);
+      
+      // For images and PDFs, allow inline viewing
+      if (ext === '.pdf' || ['.jpg', '.jpeg', '.png', '.gif'].includes(ext)) {
+        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      } else {
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      }
+      
+      res.sendFile(filePath);
+    } catch (error) {
+      console.error("Error serving file:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-    
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: "File not found" });
+  });
+
+  // Get file information
+  app.get("/api/files/:filename/info", async (req, res) => {
+    try {
+      const filename = req.params.filename;
+      
+      // Verify file access
+      const hasAccess = await storage.verifyFileAccess(filename);
+      if (!hasAccess) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const filePath = path.resolve(uploadDir, filename);
+      
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: "File not found" });
+      }
+
+      const stats = fs.statSync(filePath);
+      const ext = path.extname(filename).toLowerCase();
+      
+      const fileInfo = {
+        filename,
+        size: stats.size,
+        extension: ext,
+        created: stats.birthtime.toISOString(),
+        modified: stats.mtime.toISOString(),
+        isImage: ['.jpg', '.jpeg', '.png', '.gif'].includes(ext),
+        isPdf: ext === '.pdf',
+        isDocument: ['.doc', '.docx', '.txt', '.xls', '.xlsx'].includes(ext)
+      };
+      
+      res.json(fileInfo);
+    } catch (error) {
+      console.error("Error getting file info:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-    
-    res.download(filePath);
+  });
+
+  // Analytics endpoints
+  app.get("/api/analytics/dashboard", async (req, res) => {
+    try {
+      const analytics = await storage.getDashboardAnalytics();
+      res.json(analytics);
+    } catch (error) {
+      console.error("Error fetching dashboard analytics:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/analytics/status-distribution", async (req, res) => {
+    try {
+      const distribution = await storage.getStatusDistribution();
+      res.json(distribution);
+    } catch (error) {
+      console.error("Error fetching status distribution:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/analytics/priority-breakdown", async (req, res) => {
+    try {
+      const breakdown = await storage.getPriorityBreakdown();
+      res.json(breakdown);
+    } catch (error) {
+      console.error("Error fetching priority breakdown:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/analytics/department-activity", async (req, res) => {
+    try {
+      const activity = await storage.getDepartmentActivity();
+      res.json(activity);
+    } catch (error) {
+      console.error("Error fetching department activity:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/analytics/trends", async (req, res) => {
+    try {
+      const period = req.query.period as string || '30d';
+      const trends = await storage.getTrendData(period);
+      res.json(trends);
+    } catch (error) {
+      console.error("Error fetching trend data:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
   });
 
   const httpServer = createServer(app);

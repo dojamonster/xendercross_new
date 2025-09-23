@@ -1,48 +1,72 @@
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { ArrowLeft, FileText, Download, Wrench, ShoppingCart, Eye, Trash2, ExternalLink } from "lucide-react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api";
-import { useToast } from "@/hooks/use-toast";
-import type { FaultReport } from "./ReportsTable";
+import { Search, Eye, Filter, MoreHorizontal } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient, type FaultReportFilters } from "@/lib/api";
 
-export interface FaultReportDetailProps {
-  report: FaultReport;
-  onBack?: () => void;
-  onIssueJobCard?: (reportId: string) => void;
-  onPullRequest?: (reportId: string) => void;
+export interface FaultReport {
+  id: string;
+  title: string;
+  description: string;
+  priority: string;
+  department: string;
+  location: string;
+  reportedBy: string;
+  status: 'pending' | 'approved' | 'assigned' | 'rejected';
+  createdAt: string;
+  attachments?: string[];
 }
 
-export default function FaultReportDetail({ 
-  report, 
-  onBack, 
-  onIssueJobCard, 
-  onPullRequest 
-}: FaultReportDetailProps) {
-  const [isProcessing, setIsProcessing] = useState(false);
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
+export interface ReportsTableProps {
+  reports?: FaultReport[];
+  onViewReport?: (report: FaultReport) => void;
+  onUpdateStatus?: (reportId: string, status: string) => void;
+}
 
-  const removeAttachmentMutation = useMutation({
-    mutationFn: (filename: string) => apiClient.removeAttachment(report.id, filename),
-    onSuccess: () => {
-      toast({
-        title: "Attachment Removed",
-        description: "The file has been successfully removed from the report",
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/fault-reports"] });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive"
-      });
-    }
+export default function ReportsTable({ reports: propReports, onViewReport, onUpdateStatus }: ReportsTableProps) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState("all");
+  const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("createdAt");
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>("desc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(10);
+
+  // Build filters object
+  const filters: FaultReportFilters = {
+    search: searchTerm || undefined,
+    status: statusFilter !== "all" ? statusFilter : undefined,
+    priority: priorityFilter !== "all" ? priorityFilter : undefined,
+    department: departmentFilter !== "all" ? departmentFilter : undefined,
+    sortBy,
+    sortOrder,
+    page: currentPage,
+    limit: pageSize
+  };
+
+  // Use API query if no reports prop provided, otherwise use prop data
+  const { data: queryData, isLoading } = useQuery({
+    queryKey: ["/api/fault-reports", filters],
+    queryFn: () => apiClient.fetchFaultReports(filters),
+    enabled: !propReports // Only query if no reports provided via props
   });
+
+  const reportsData = propReports ? { data: propReports, total: propReports.length, page: 1, totalPages: 1 } : queryData;
+  const reports = reportsData?.data || [];
+  
+  // Get unique departments for filter
+  const departments = Array.from(new Set(reports.map(r => r.department).filter(Boolean)));
 
   const getStatusBadge = (status: string) => {
     const statusConfig = {
@@ -55,7 +79,7 @@ export default function FaultReportDetail({
     const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.pending;
     
     return (
-      <Badge className={config.color} data-testid={`status-badge-${status}`}>
+      <Badge className={config.color} data-testid={`status-${status}`}>
         {config.label}
       </Badge>
     );
@@ -72,7 +96,7 @@ export default function FaultReportDetail({
     const config = priorityConfig[priority as keyof typeof priorityConfig] || priorityConfig.low;
     
     return (
-      <Badge variant="outline" className={config.color} data-testid={`priority-badge-${priority}`}>
+      <Badge variant="outline" className={config.color} data-testid={`priority-${priority}`}>
         {config.label}
       </Badge>
     );
@@ -80,230 +104,197 @@ export default function FaultReportDetail({
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
+      month: 'short',
       day: 'numeric',
+      year: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
     });
   };
 
-  const handleJobCard = async () => {
-    setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate processing
-    onIssueJobCard?.(report.id);
-    setIsProcessing(false);
+  const handleSearch = (value: string) => {
+    setSearchTerm(value);
+    setCurrentPage(1); // Reset to first page when searching
   };
 
-  const handlePullRequest = async () => {
-    setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate processing
-    onPullRequest?.(report.id);
-    setIsProcessing(false);
-  };
-
-  const handleRemoveAttachment = (filename: string) => {
-    if (window.confirm('Are you sure you want to remove this attachment?')) {
-      removeAttachmentMutation.mutate(filename);
+  const handleFilterChange = (filterType: string, value: string) => {
+    switch (filterType) {
+      case 'status':
+        setStatusFilter(value);
+        break;
+      case 'priority':
+        setPriorityFilter(value);
+        break;
+      case 'department':
+        setDepartmentFilter(value);
+        break;
     }
+    setCurrentPage(1); // Reset to first page when filtering
   };
 
-  const handleViewFile = (filename: string) => {
-    const url = apiClient.getFileViewUrl(filename);
-    window.open(url, '_blank');
-  };
-
-  const handleDownloadFile = (filename: string) => {
-    const url = apiClient.getFileDownloadUrl(filename);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const getFileIcon = (filename: string) => {
-    const ext = filename.split('.').pop()?.toLowerCase();
-    const imageExts = ['jpg', 'jpeg', 'png', 'gif'];
-    const docExts = ['pdf', 'doc', 'docx', 'txt', 'xls', 'xlsx'];
-    
-    if (imageExts.includes(ext || '')) {
-      return '🖼️';
-    } else if (ext === 'pdf') {
-      return '📄';
-    } else if (docExts.includes(ext || '')) {
-      return '📝';
-    }
-    return '📎';
-  };
-  return (
-    <div className="w-full max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-4 mb-6">
-        <Button
-          variant="outline"
-          onClick={onBack}
-          data-testid="button-back"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Reports
-        </Button>
-        <h1 className="text-2xl font-bold" data-testid="text-detail-title">Fault Report Details</h1>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
-            <div className="space-y-2">
-              <CardTitle className="text-xl" data-testid="text-report-title">
-                {report.title}
-              </CardTitle>
-              <div className="flex gap-2">
-                {getStatusBadge(report.status)}
-                {getPriorityBadge(report.priority)}
-              </div>
-            </div>
-            <div className="text-sm text-muted-foreground" data-testid="text-report-id">
-              Report ID: {report.id}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-muted-foreground">Department</label>
-              <p className="text-sm" data-testid="text-department">{report.department || 'Not specified'}</p>
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-muted-foreground">Location</label>
-              <p className="text-sm" data-testid="text-location">{report.location || 'Not specified'}</p>
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-muted-foreground">Reported By</label>
-              <p className="text-sm" data-testid="text-reported-by">{report.reportedBy || 'Anonymous'}</p>
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-muted-foreground">Created Date</label>
-              <p className="text-sm" data-testid="text-created-date">{formatDate(report.createdAt)}</p>
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-muted-foreground">Priority</label>
-              <p className="text-sm capitalize" data-testid="text-priority-text">{report.priority}</p>
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-muted-foreground">Status</label>
-              <p className="text-sm capitalize" data-testid="text-status-text">{report.status}</p>
-            </div>
-          </div>
-
-          <Separator />
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">Description</label>
-            <p className="text-sm leading-relaxed" data-testid="text-description">
-              {report.description}
-            </p>
-          </div>
-
-          {report.files && report.files.length > 0 && (
-            <>
-              <Separator />
-              <div className="space-y-4">
-                <label className="text-sm font-medium text-muted-foreground">
-                  Attachments ({report.files.length})
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {report.files.map((file, index) => (
-                    <Card key={index} className="hover-elevate">
-                      <CardContent className="p-3">
-                        <div className="flex items-center space-x-3">
-                          <FileText className="h-8 w-8 text-muted-foreground flex-shrink-0" />
-                            <div className="text-2xl flex-shrink-0">
-                              {getFileIcon(filename)}
-                            </div>
-                                {filename.split('-').slice(2).join('-') || filename}
-                              {file.name}
-                              <p className="text-xs text-muted-foreground">
-                                Click to view or download
-                              </p>
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleViewFile(filename)}
-                              data-testid={`button-view-${index}`}
-                              title="View file"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleDownloadFile(filename)}
-                              data-testid={`button-download-${index}`}
-                              title="Download file"
-                            >
-                              <Download className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleRemoveAttachment(filename)}
-                              data-testid={`button-remove-${index}`}
-                              title="Remove attachment"
-                              disabled={removeAttachmentMutation.isPending}
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-
-          <Separator />
-
-          <div className="space-y-4">
-            <h3 className="text-lg font-semibold" data-testid="text-actions-title">Actions</h3>
-            <div className="flex flex-col sm:flex-row gap-4">
-              <Button
-                onClick={handleJobCard}
-                disabled={isProcessing || report.status === 'approved'}
-                className="flex-1 sm:flex-none"
-                data-testid="button-issue-job-card"
-              >
-                <Wrench className="h-4 w-4 mr-2" />
-                {isProcessing ? "Processing..." : "Issue Job Card"}
-              </Button>
-              
-              <Button
-                variant="outline"
-                onClick={handlePullRequest}
-                disabled={isProcessing || report.status === 'assigned'}
-                className="flex-1 sm:flex-none"
-                data-testid="button-pull-request"
-              >
-                <ShoppingCart className="h-4 w-4 mr-2" />
-                {isProcessing ? "Processing..." : "Pull Request to Procurement Manager"}
-              </Button>
-            </div>
-            
-            {(report.status === 'approved' || report.status === 'assigned') && (
-              <div className="text-sm text-muted-foreground mt-2" data-testid="text-action-note">
-                {report.status === 'approved' && "Job card has been issued to workshop planner."}
-                {report.status === 'assigned' && "Task has been assigned to Procurement Manager."}
-              </div>
-            )}
+  if (isLoading && !propReports) {
+    return (
+      <Card className="w-full">
+        <CardContent className="p-6">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading reports...</p>
           </div>
         </CardContent>
       </Card>
-    </div>
+    );
+  }
+  return (
+    <Card className="w-full">
+      <CardHeader>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <CardTitle className="text-2xl font-semibold" data-testid="title-reports">
+            Fault Reports
+            {reportsData && (
+              <span className="text-sm font-normal text-muted-foreground ml-2">
+                ({reportsData.total} total)
+              </span>
+            )}
+          </CardTitle>
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto flex-wrap">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search reports..."
+                value={searchTerm}
+                onChange={(e) => handleSearch(e.target.value)}
+                className="pl-10 w-full sm:w-64"
+                data-testid="input-search"
+              />
+            </div>
+            <Select value={statusFilter} onValueChange={(value) => handleFilterChange('status', value)}>
+              <SelectTrigger className="w-full sm:w-32" data-testid="select-status-filter">
+                <Filter className="h-4 w-4 mr-2" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="assigned">Assigned</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={priorityFilter} onValueChange={(value) => handleFilterChange('priority', value)}>
+              <SelectTrigger className="w-full sm:w-32" data-testid="select-priority-filter">
+                <SelectValue placeholder="Priority" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Priority</SelectItem>
+                <SelectItem value="low">Low</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+                <SelectItem value="critical">Critical</SelectItem>
+              </SelectContent>
+            </Select>
+            {departments.length > 0 && (
+              <Select value={departmentFilter} onValueChange={(value) => handleFilterChange('department', value)}>
+                <SelectTrigger className="w-full sm:w-32" data-testid="select-department-filter">
+                  <SelectValue placeholder="Department" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Departments</SelectItem>
+                  {departments.map(dept => (
+                    <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {reports.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground" data-testid="text-no-reports">
+            No fault reports found matching your criteria.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {reports.map((report) => (
+              <Card key={report.id} className="hover-elevate cursor-pointer" data-testid={`card-report-${report.id}`}>
+                <CardContent className="p-4">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div className="flex-1 space-y-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                        <h3 className="font-semibold text-lg" data-testid={`title-${report.id}`}>
+                          {report.title}
+                        </h3>
+                        <div className="flex gap-2">
+                          {getStatusBadge(report.status)}
+                          {getPriorityBadge(report.priority)}
+                        </div>
+                      </div>
+                      
+                      <p className="text-muted-foreground text-sm line-clamp-2" data-testid={`description-${report.id}`}>
+                        {report.description}
+                      </p>
+                      
+                      <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                        <span data-testid={`department-${report.id}`}>
+                          <strong>Department:</strong> {report.department || 'N/A'}
+                        </span>
+                        <span data-testid={`location-${report.id}`}>
+                          <strong>Location:</strong> {report.location || 'N/A'}
+                        </span>
+                        <span data-testid={`reported-by-${report.id}`}>
+                          <strong>By:</strong> {report.reportedBy || 'Anonymous'}
+                        </span>
+                        <span data-testid={`created-at-${report.id}`}>
+                          <strong>Created:</strong> {formatDate(report.createdAt)}
+                        </span>
+                      </div>
+                      
+                      {report.attachments && report.attachments.length > 0 && (
+                        <div className="text-sm text-muted-foreground" data-testid={`attachments-${report.id}`}>
+                          <strong>Attachments:</strong> {report.attachments.length} file(s)
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onViewReport?.(report)}
+                        data-testid={`button-view-${report.id}`}
+                      >
+                        <Eye className="h-4 w-4 mr-1" />
+                        View Details
+                      </Button>
+                      
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" data-testid={`button-actions-${report.id}`}>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => onUpdateStatus?.(report.id, 'approved')}>
+                            Mark as Approved
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => onUpdateStatus?.(report.id, 'assigned')}>
+                            Assign to PM
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => onUpdateStatus?.(report.id, 'rejected')}>
+                            Mark as Rejected
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+            
+            {/* Pagination */}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
